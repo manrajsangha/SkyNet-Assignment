@@ -1,0 +1,59 @@
+
+===============================================================================================================================
+PLEASE refer the Code Checklist section of project2.docx
+===============================================================================================================================
+	DONE :  Enable signing and verification for any botnet updates. 
+			This requires signing code in master sign.py and verification code
+			in the verify file function in lib/files.py.
+	DONE :  Ensure upload valuables to pastebot securely encrypts the data so it’s
+			only accessible to the botnet master. You also need to modify master_view.py 
+			to allow the file to be decrypted and read by the botnet master.
+
+We will test that you can:
+--------------------------
+	TESTED  : Create and sign a new botnet update
+	TESTED  : Test bot update verification by trying to download a legitimate update and a fradulent update from pastebot.net
+	PENDING : Test bot update verification when downloading updates via P2P
+	TESTED	: Upload valuables of arbitrary size to pastebot.net in an encrypted manner,
+			  Decrypt encrypted valuables of arbitrary size using the botnet master’s private key
+	DONE	: Your code must be well commented and in neat order.
+
+===============================================================================================================================
+PLEASE refer the Documentation section of project2.docx
+===============================================================================================================================	
+
+QUESTION :  How do you ensure the only one who can send updates to SkyNet is the botnet master?
+ANSWER	 :  Only the botnet master will have access to the private key. 
+			It the responsibility of botnet owner to keep those private key files safe
+			
+QUESTION :  How do you protect the valuable information to ensure it can only  be read by the botnet master? 
+			Remember that anyone can read the information uploaded onto pastebot.net.			
+ANSWER	 :  Even if the attacker has got public key and access to all the information over pastebot.net he/she cannot 
+			read the data as it would be in encrypted state. Data cannoted be decrypted because to do so one must have
+			private key, which happens to be with botnet owner only.
+
+QUESTION :  How do you ensure the botnet updates signed by the botnet master cannot be forged or modified?
+ANSWER	 :	To modify the data one must have access to the original data, which can only be seen by botnet owner.
+
+QUESTION :  If SkyNet’s botnet code is dismantled and/or the source code for it stolen, does your scheme become less secure?
+ANSWER	 :	No.		
+			
+QUESTION :  Give an indication of how diffcult it would be for an adversary to take control of SkyNet when your protections are used.
+ANSWER	 :	We are using 1024 bit encryption key. One must have a really high and powerfull computational machine to find the hash values.
+
+
+===============================================================================================================================	
+NOTE :
+Authentication : I think this is already implemented and it is also not a part of project 2.
+
+===============================================================================================================================	
+Introduction :
+--------------
+The Python cryptography toolkit is intended to provide a reliable and stable base for writing Python programs that require cryptographic functions.
+
+Security Note:
+--------------
+Hashing algorithms are broken by developing an algorithm to compute a string that produces a given hash value,or to find two messages that produce the same hash value.
+
+In this project PyCrypto is used as encryption tool which is really a good implementation currently available for python. 
+For example, the API for Crypto.Random (introduced in PyCrypto 2.1) was designed to be pretty foolproof, and the underlying algorithm it uses (Fortuna) was also designed to be pretty foolproof.
