@@ -1,0 +1,659 @@
+diff --git a/CodeChecklist and Documentation for project 2 only.txt b/CodeChecklist and Documentation for project 2 only.txt
+new file mode 100644
+index 0000000..ed2d99c
+--- /dev/null
++++ b/CodeChecklist and Documentation for project 2 only.txt	
+@@ -0,0 +1,59 @@
++
++===============================================================================================================================
++PLEASE refer the Code Checklist section of project2.docx
++===============================================================================================================================
++	DONE :  Enable signing and verification for any botnet updates. 
++			This requires signing code in master sign.py and verification code
++			in the verify file function in lib/files.py.
++	DONE :  Ensure upload valuables to pastebot securely encrypts the data so it’s
++			only accessible to the botnet master. You also need to modify master_view.py 
++			to allow the file to be decrypted and read by the botnet master.
++
++We will test that you can:
++--------------------------
++	TESTED  : Create and sign a new botnet update
++	TESTED  : Test bot update verification by trying to download a legitimate update and a fradulent update from pastebot.net
++	PENDING : Test bot update verification when downloading updates via P2P
++	TESTED	: Upload valuables of arbitrary size to pastebot.net in an encrypted manner,
++			  Decrypt encrypted valuables of arbitrary size using the botnet master’s private key
++	DONE	: Your code must be well commented and in neat order.
++
++===============================================================================================================================
++PLEASE refer the Documentation section of project2.docx
++===============================================================================================================================	
++
++QUESTION :  How do you ensure the only one who can send updates to SkyNet is the botnet master?
++ANSWER	 :  Only the botnet master will have access to the private key. 
++			It the responsibility of botnet owner to keep those private key files safe
++			
++QUESTION :  How do you protect the valuable information to ensure it can only  be read by the botnet master? 
++			Remember that anyone can read the information uploaded onto pastebot.net.			
++ANSWER	 :  Even if the attacker has got public key and access to all the information over pastebot.net he/she cannot 
++			read the data as it would be in encrypted state. Data cannoted be decrypted because to do so one must have
++			private key, which happens to be with botnet owner only.
++
++QUESTION :  How do you ensure the botnet updates signed by the botnet master cannot be forged or modified?
++ANSWER	 :	To modify the data one must have access to the original data, which can only be seen by botnet owner.
++
++QUESTION :  If SkyNet’s botnet code is dismantled and/or the source code for it stolen, does your scheme become less secure?
++ANSWER	 :	No.		
++			
++QUESTION :  Give an indication of how diffcult it would be for an adversary to take control of SkyNet when your protections are used.
++ANSWER	 :	We are using 1024 bit encryption key. One must have a really high and powerfull computational machine to find the hash values.
++
++
++===============================================================================================================================	
++NOTE :
++Authentication : I think this is already implemented and it is also not a part of project 2.
++
++===============================================================================================================================	
++Introduction :
++--------------
++The Python cryptography toolkit is intended to provide a reliable and stable base for writing Python programs that require cryptographic functions.
++
++Security Note:
++--------------
++Hashing algorithms are broken by developing an algorithm to compute a string that produces a given hash value,or to find two messages that produce the same hash value.
++
++In this project PyCrypto is used as encryption tool which is really a good implementation currently available for python. 
++For example, the API for Crypto.Random (introduced in PyCrypto 2.1) was designed to be pretty foolproof, and the underlying algorithm it uses (Fortuna) was also designed to be pretty foolproof.
+diff --git a/bot.py b/bot.py
+index cd5cdba..4a7bfc4 100644
+--- a/bot.py
++++ b/bot.py
+@@ -5,6 +5,7 @@ import threading
+ from lib.evil import bitcoin_mine, harvest_user_pass
+ from lib.p2p import find_bot, bot_server
+ from lib.files import download_from_pastebot, filestore, p2p_upload_file, save_valuable, upload_valuables_to_pastebot, valuables
++from key_generator import generate_key
+ 
+ def p2p_upload(fn):
+     sconn = find_bot()
+@@ -94,6 +95,11 @@ if __name__ == "__main__":
+         elif cmd[0].lower() == "list":
+             print("Files stored by this bot: %s" % ", ".join(filestore.keys()))
+             print("Valuables stored by this bot: %s" % valuables)
++		# Generate new private and public key pair to be used for encryption in future.
++        elif cmd[0].lower() == "newkey":			
++            generate_key()
++            print("key generated")
++            print("done")			
+         # Exit command
+         elif cmd[0].lower() == "quit" or cmd[0].lower() == "exit":
+             break
+diff --git a/key_generator.py b/key_generator.py
+new file mode 100644
+index 0000000..1d88587
+--- /dev/null
++++ b/key_generator.py
+@@ -0,0 +1,31 @@
++from Crypto.Cipher import AES
++from Crypto.PublicKey import RSA
++from Crypto import Random
++import os
++
++"""
++@generate_key
++This function will generate the public and private keys.
++
++Public key is shared among users and it is used to encrypt data.
++It is users/bot owners responsability to make sure that only he/she has access to private key.
++Data can only be decrypted with private key.
++
++out : public  keys in pastebot.net
++out : private keys in privatekey.net (keep these secure)
++
++Any number of key pairs can be generated.
++"""
++def generate_key():
++	random_generator = Random.new().read
++	key = RSA.generate(1024, random_generator)
++	print("Key successfully generated.")
++	name = input("Enter the file name to store the keys : ")
++	print("WARNING : Do not share your private key with anyone.")
++	print("Public key stored in file  : ",name,"public.pem",sep="")	
++	print("Private key stored in file : ",name,"private.pem",sep="")
++	with open(os.path.join("privatekey.net",name+"private.pem"), 'wb') as fo:
++		fo.write(key.exportKey())
++	public_key = key.publickey()
++	with open(os.path.join("pastebot.net",name+"public.pem"), 'wb') as fo:
++		fo.write(public_key.exportKey())	
+\ No newline at end of file
+diff --git a/lib/files.py b/lib/files.py
+index 55a803f..59a6e85 100644
+--- a/lib/files.py
++++ b/lib/files.py
+@@ -1,4 +1,11 @@
+ import os
++from Crypto.Cipher import AES
++from Crypto.PublicKey import RSA
++from Crypto import Random #Importing PRNG
++from Crypto.Hash import SHA256 #Authentication Hash
++from Crypto.Signature import PKCS1_v1_5 #Used for authentication of signature 
++from key_generator import generate_key
++import pickle
+ 
+ # Instead of storing files on disk,
+ # we'll save them in memory for simplicity
+@@ -11,37 +18,76 @@ valuables = []
+ def save_valuable(data):
+     valuables.append(data)
+ 
++"""
++@encrypt_for_master
++This function encrypts the data/valuables before uploading to pastebot.net
++
++in  : Public key to be used for encryption
++out : Encrypted data
++"""	
+ def encrypt_for_master(data):
+     # Encrypt the file so it can only be read by the bot master
+-    return data
++	pub_key = input("public key file name : ")
++	print (pub_key)
++	if not os.path.exists(os.path.join("pastebot.net", pub_key)):
++		print("Public key file not found")
++		os.exit(1)
++	with open(os.path.join("pastebot.net", pub_key), 'rb') as fo:
++		public_key = fo.read()
++	pycrypto_key =  RSA.importKey(public_key)
++	return pycrypto_key.encrypt(data.encode('utf-8'), 32)
+ 
+ def upload_valuables_to_pastebot(fn):
+-    # Encrypt the valuables so only the bot master can read them
+-    valuable_data = "\n".join(valuables)
+-    valuable_data = bytes(valuable_data, "ascii")
+-    encrypted_master = encrypt_for_master(valuable_data)
++	# Encrypt the valuables so only the bot master can read them
++	print("If you have not generated the keys yet than please do it using command : newkey")
++	ans = input("Do you want to generate keys (yes/no)? : ")
++	if ans.lower() == "yes":
++		generate_key()
++	valuable_data = "\n".join(valuables)
++	#valuable_data = bytes(valuable_data, "ascii")
++	encrypted_master = encrypt_for_master(valuable_data)
+ 
+-    # "Upload" it to pastebot (i.e. save in pastebot folder)
+-    f = open(os.path.join("pastebot.net", fn), "wb")
+-    f.write(encrypted_master)
+-    f.close()
++	# "Upload" it to pastebot (i.e. save in pastebot folder)
++	f = open(os.path.join("pastebot.net", fn), "wb")
++	f.write(pickle.dumps(encrypted_master, protocol=pickle.HIGHEST_PROTOCOL))	
++	f.close()
+ 
+-    print("Saved valuables to pastebot.net/%s for the botnet master" % fn)
++	print("Saved valuables to pastebot.net/%s for the botnet master" % fn)
+ 
+ ###
+ 
+-def verify_file(f):
+-    # Verify the file was sent by the bot master
+-    # TODO: For Part 2, you'll use public key crypto here
+-    # Naive verification by ensuring the first line has the "passkey"
+-    lines = f.split(bytes("\n", "ascii"), 1)
+-    first_line = lines[0]
+-    if first_line == bytes("Caesar", "ascii"):
+-        return True
+-    return False
++"""
++@verify_file
++This function verifys the original data and the encrypted data using the signature.
++Before calling this funtion, user must sign the uploaded file.
++users cannot download the file if bot owner has not signed the file.
++"""
++def verify_file(fn,f):
++	#def verify_file(f):
++	# Verify the file was sent by the bot master
++	# TODO: For Part 2, you'll use public key crypto here
++	# Naive verification by ensuring the first line has the "passkey"
++	if not os.path.exists(os.path.join("pastebot.net", fn+".signed")):
++		print("The given file doesn't exist on pastebot.net")
++		return	
++	pub_key = input("Public key file name : ")
++	if not os.path.exists(os.path.join("pastebot.net", pub_key)):
++		print("public key file not found")
++		os.exit(1)
++	with open(os.path.join("pastebot.net", pub_key), 'rb') as fo:
++		public_key = fo.read()		
++	pycrypto_key =  RSA.importKey(public_key)
++	verifier = PKCS1_v1_5.new(pycrypto_key)
++	
++	print("Checking signature in ",fn+".signed","file")		
++	hash = SHA256.new(f)#.digest()	
++	fh = open(os.path.join("pastebot.net", fn+".signed"), "rb")		
++	signature = pickle.load(fh)
++	return verifier.verify(hash, signature)
++	
+ 
+ def process_file(fn, f):
+-    if verify_file(f):
++    if verify_file(fn,f):
+         # If it was, store it unmodified
+         # (so it can be sent to other bots)
+         # Decrypt and run the file
+@@ -58,6 +104,7 @@ def download_from_pastebot(fn):
+         print("The given file doesn't exist on pastebot.net")
+         return
+     f = open(os.path.join("pastebot.net", fn), "rb").read()
++    #data = pickle.load(f)
+     process_file(fn, f)
+ 
+ def p2p_download_file(sconn):
+diff --git a/master_sign.py b/master_sign.py
+new file mode 100644
+index 0000000..4995263
+--- /dev/null
++++ b/master_sign.py
+@@ -0,0 +1,46 @@
++import os
++from Crypto.Hash import SHA256
++from Crypto.PublicKey import RSA
++from Crypto import Random
++import pickle
++from Crypto.Signature import PKCS1_v1_5
++
++"""
++@sign_file
++We use your private key to write message's signature, and 
++revceiver uses the public key to check if it's really our message.
++in  : plain file, non encrypted.
++out : digital signature in new file named as originalfile.signed 
++"""
++def sign_file(f):
++	# TODO: For Part 2, you'll use public key crypto here
++	# The existing scheme just ensures the updates start with the line 'Caesar'
++	# This is naive -- replace it with something better!
++	priv_key = input("private key file name : ")
++	if not os.path.exists(os.path.join("privatekey.net", priv_key)):
++		print("private key file not found")
++		os.exit(1)
++	with open(os.path.join("privatekey.net", priv_key), 'rb') as fo:
++		private_key = fo.read()
++	pycrypto_key =  RSA.importKey(private_key)
++	
++	hash = SHA256.new(f)
++	signer = PKCS1_v1_5.new(pycrypto_key)		
++	return signer.sign(hash)
++
++
++if __name__ == "__main__":
++	try:
++		fn = input("Which file in pastebot.net should be signed? ")
++		if not os.path.exists(os.path.join("pastebot.net", fn)):
++			print("The given file doesn't exist on pastebot.net")
++			os.exit(1)
++		f = open(os.path.join("pastebot.net", fn), "rb").read()
++		signed_f = sign_file(f)
++		signed_fn = os.path.join("pastebot.net", fn + ".signed")
++		out = open(signed_fn, "wb")
++		out.write(pickle.dumps(signed_f, protocol=pickle.HIGHEST_PROTOCOL))
++		out.close()
++		print("Signed file written to", signed_fn)
++	except:
++		print ("You provided some wrong inputs. Try again")
+\ No newline at end of file
+diff --git a/master_view.py b/master_view.py
+new file mode 100644
+index 0000000..18c17fa
+--- /dev/null
++++ b/master_view.py
+@@ -0,0 +1,36 @@
++import os
++from Crypto.Cipher import AES
++from Crypto.PublicKey import RSA
++from Crypto import Random
++import pickle
++
++"""
++@decrypt_valuables
++The data can only be decrypted by using private key,
++which must be only accessible to the bot owner.
++in : encrypted data
++in : private key, which will be used for decryption
++out : decrypted data
++"""
++def decrypt_valuables(f):
++	priv_key = input("private key file name : ")	
++	if not os.path.exists(os.path.join("privatekey.net", priv_key)):
++		print("private key file not found")
++		os.exit(1)
++	with open(os.path.join("privatekey.net", priv_key), 'rb') as fo:
++		private_key = fo.read()
++	data = pickle.load(f)
++	pycrypto_key =  RSA.importKey(private_key)	
++	return pycrypto_key.decrypt(data).decode('utf-8')
++
++
++if __name__ == "__main__":
++	try:
++		fn = input("Which file in pastebot.net does the botnet master want to view? ")
++		if not os.path.exists(os.path.join("pastebot.net", fn)):
++			print("The given file doesn't exist on pastebot.net")
++			os.exit(1)
++		f = open(os.path.join("pastebot.net", fn), "rb")#.read()
++		print (decrypt_valuables(f))
++	except:
++		print ("You provided some wrong inputs. Try again")
+\ No newline at end of file
+diff --git a/pastebot.net/1 b/pastebot.net/1
+new file mode 100644
+index 0000000..e4e98ce
+--- /dev/null
++++ b/pastebot.net/1
+@@ -0,0 +1 @@
++(b"~\xc9\x1c\xf8\x04\xbd\xb2\x15\xa8\x82\xa8\x15\xd4Q\x90x\xe9\xb1\xc1\x1a\xc1\xbd'0>\xcdJ\xf8)\x87\xc8\xd4\x13\xffN\xdfstv\x8c\xd6\na\x04\xf3!U\x92\xe5\xfb\xfb\x89\xe9(T\xb4\x82s\n\x03\xb2\xe8\xdb\xe6y\xef$\xf7\x85\xb6\xf8\x1f`]\x19R\x8d\x88zf\x88\xcfr\xa7\xf9wn-z\x0co\x0b\x13\x8dh\x9d\xc4y\x92>x\t#\xb2 \xd5\xff\xbd\x15\xb4M\xf2\xd8\x8b\xe4\x12u\x1e\xebB\xb2\xcb\xf4X\x03\x12\xf1r",)
+\ No newline at end of file
+diff --git a/pastebot.net/2 b/pastebot.net/2
+new file mode 100644
+index 0000000..8026c33
+--- /dev/null
++++ b/pastebot.net/2
+@@ -0,0 +1 @@
++(b'\x0b\x07\xdf3h\xbc<#\xa2\x8d\xa9D\x1e\xf2;\xfebq4\xb0^\xaa\xd2z\xb7\xb0\r\xa9)\x9f\xb6^I\x97\x85#";\xa2\xaa^\x1b\xef\x00\xd2g\xc2}\xde\\J]l\xee%2\x88\x0c\x94\xd7wZ\x02\xe6\xe7hX\x88\x16\xcf\x1cm\xd1\x101\xf5\xe19\xfc_A\xa1\x12\x06\xe7\x9e\xa7\xcd\x1bE\xc9\x0e\x8fx\xfb\xd9\xce\xf6t\xe5_\xb2\xe4B\xabP\xc1h\x01\xa1\xa9\\\x1fl\xd7\xb7\xd27\'4\xa0w,\xb2E\xed\xd0\x1f',)
+\ No newline at end of file
+diff --git a/pastebot.net/3 b/pastebot.net/3
+new file mode 100644
+index 0000000..9086090
+Binary files /dev/null and b/pastebot.net/3 differ
+diff --git a/pastebot.net/3.signed b/pastebot.net/3.signed
+new file mode 100644
+index 0000000..497e038
+Binary files /dev/null and b/pastebot.net/3.signed differ
+diff --git a/pastebot.net/4 b/pastebot.net/4
+new file mode 100644
+index 0000000..3ef6d67
+Binary files /dev/null and b/pastebot.net/4 differ
+diff --git a/pastebot.net/5 b/pastebot.net/5
+new file mode 100644
+index 0000000..3ef6d67
+Binary files /dev/null and b/pastebot.net/5 differ
+diff --git a/pastebot.net/Nonepublic.pem b/pastebot.net/Nonepublic.pem
+new file mode 100644
+index 0000000..3998849
+--- /dev/null
++++ b/pastebot.net/Nonepublic.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3fUaGVNFy8xcsLZSqE2kkT1kt
++2rQ2I776OAz4jgJetR/d/3zvbihFsx13Gu2CRWin4dVUPWwlW34egTyW8vSyFSfA
++GMy/Vfve3DpOAdnl9AHcKR+FNTSwvtAFRkm0VWnruPUoa5r1lgcdVrMEXWQH7R7m
++WVJeW9sdLcSgZ0rK/QIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/a1public.pem b/pastebot.net/a1public.pem
+new file mode 100644
+index 0000000..4817ae8
+--- /dev/null
++++ b/pastebot.net/a1public.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDQlHMXMnD2SX/kr5jo8/h0/E5o
++uxgFr9r7W4tHSVDa2qsq8a1Qnsr32Qs/Zlg81v9wmo1dsnmMHkY9c6xzI/1ynwyy
++WF9kjuylzdpUvUvoTzGY8qCkXvZMANdu/E/o/HoNaROdZ9dDJ7gYTWl3EDn9mqwR
++5w4L8r+JtpvIy9e4gwIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/a2public.pem b/pastebot.net/a2public.pem
+new file mode 100644
+index 0000000..7ad37dc
+--- /dev/null
++++ b/pastebot.net/a2public.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCxG8i0sbQM2LfZfN4pamXkmtLO
++2uCGX9wbJNddtWyr02TbnNbVUGGuNROurmO9qnijMJC/jfghylT/hqnHD6hbuZ6P
++qet/UQm0YJO70SsTxB4ThK2YXkcnBLEsc3COofkHSYKp4opghqUssgAFhkj6Adcn
++VjZ/S7LXgMngkky0IwIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/a3files b/pastebot.net/a3files
+new file mode 100644
+index 0000000..11fc44c
+Binary files /dev/null and b/pastebot.net/a3files differ
+diff --git a/pastebot.net/a3public.pem b/pastebot.net/a3public.pem
+new file mode 100644
+index 0000000..2c9e9db
+--- /dev/null
++++ b/pastebot.net/a3public.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCsPlvyOMTRufVIhhC2j7G6vprl
++kilKrJiqqiGBU5AGQJX0B0LRGF/N8UywHltNrihE3ot/axbXLwPqAkmNOYElWj+Q
++fb+aTJjSdmKlFqcgOfPPWmCS5XID+9XWX2kGa6i/oxzync9AZm1kXfPbvRVWOcVC
++GL+2ms7C0GSswnzxJQIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/apublic.pem b/pastebot.net/apublic.pem
+new file mode 100644
+index 0000000..519dff9
+--- /dev/null
++++ b/pastebot.net/apublic.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCZ7gp8Cz0hi9gvsuMEaDvTe76w
++pa22spPLbEcYl3PKZFugSOQ+LrQlY8j4ORWmj3kAVubjUBA6P3QchKTGoxpQtopU
+++mhf5nx3A6lw32G6hYNKM/x8LiKllQTZ6CNLJ1mKndbnHhR7FoIj6RQ6c+Y/IE+h
++n7HkRXs8R0mkSHrNzQIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/mykeyspublic.pem b/pastebot.net/mykeyspublic.pem
+new file mode 100644
+index 0000000..3544906
+--- /dev/null
++++ b/pastebot.net/mykeyspublic.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCkkaFz95Rg+Lp6F2T+skInkxMg
++yRXo0c9vDLaKTdNFaaTGbSwDhLkIgTvBizRNKeXI1h5nJvqIlYuXXDJHH/LAqCnp
++Q63VzRUjbf/3fuZRHacluJM2YJ67TWs/sfiZjVITxik8ZTzxWujpg+Omn+OUTzrH
++IdqsowyibIiGWaeD9wIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/private.pem b/pastebot.net/private.pem
+new file mode 100644
+index 0000000..306e41f
+--- /dev/null
++++ b/pastebot.net/private.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXAIBAAKBgQC3Be4RjyGd6XNC/C0r4fsIObPqjiw6zHOeDYVIyS/vTvcYEpGK
++tnx0uMIsTPDIbErfl8T4tJZuEcoZsoQf/wNh7lBfLyWZW0u4E8yz49Rkolu+4B5N
++MEnzZkz0TK95VcRLxVyPkyUMrF6kCCJJ2xH6XkElzX1yZmIriFELYhbDIwIDAQAB
++AoGATJ3r4mfjr8JpoPIGSueH+hKF0bwAogCyqciJMkYejfSlles4CDSKdyZdCsSO
++y6gh0+Yp699VVfCWhRlpHCfaFu9XE0FuoFiuBTmkO+3MsKRwVJpA8xxZnQLu114q
++Du2mGOAGnxlscIXx/wtN0oxqGQED/Jen9S43i/gv9sliJ9kCQQC/L/3/8IlqeM6s
++zZerlCw65CU3Q7rLQWUXi4VK8Um/Ha31HPfJCPsy7/p6ID40XPBkGx8W82fQSVhF
++TfwgaeKfAkEA9RFoKy/IbIhk4nF8cTPQqyo3dmUnlmqarPbXoKheajc3YmNgb8w7
++QXDH1NxSMUTICGp7sQ6EZLp57YeqLaa0/QJBALgZO4mvknMPH1ywoELc7HZM6DU+
++J+m+79xrQg/3Jl888hycJ1HTLyhOgzAESkHb2LNclmRgP/AGIFSkEosXytsCQGJf
++OWRUiuxeF7j5+wzp0rJSgO7qjeiIJEyXzVh1HWkffwDkiTp3TbXoEp70TZ3vUShn
++rf0VqblRTU42re4jQ/UCQBp0N6EsgCuPg2WhAevXg6/HARk5Dq4FiOhcRMz5FLOw
++LrTvm/aYigKGx+rFLv0GKSvpduUCL3xbH24sJQ/imvs=
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/public.pem b/pastebot.net/public.pem
+new file mode 100644
+index 0000000..516b3d2
+--- /dev/null
++++ b/pastebot.net/public.pem
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3Be4RjyGd6XNC/C0r4fsIObPq
++jiw6zHOeDYVIyS/vTvcYEpGKtnx0uMIsTPDIbErfl8T4tJZuEcoZsoQf/wNh7lBf
++LyWZW0u4E8yz49Rkolu+4B5NMEnzZkz0TK95VcRLxVyPkyUMrF6kCCJJ2xH6XkEl
++zX1yZmIriFELYhbDIwIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/pastebot.net/secrets b/pastebot.net/secrets
+new file mode 100644
+index 0000000..7613812
+--- /dev/null
++++ b/pastebot.net/secrets
+@@ -0,0 +1,3 @@
++Bitcoin: 18syClmQPh6wMbP9eFBuY5LGxcq9q
++Bitcoin: 3gkbs4RDz7EMTfboWfr8VPBTMq8dvGfl4
++Bitcoin: 1d49nehFFcH6tGmFgdOr1GcN0U1su48R
+\ No newline at end of file
+diff --git a/pastebot.net/secrets.signed b/pastebot.net/secrets.signed
+new file mode 100644
+index 0000000..803084e
+--- /dev/null
++++ b/pastebot.net/secrets.signed
+@@ -0,0 +1 @@
++(b'n;\xfe\xcaU\xd1\xf1\x07\x01\xc1%\x83i$\xe5\xe1\xb9\x02\xcb\x82N\xc0uT\xf8{\x95\xfd\xe4\x8e\x04\xf9\xda\x1dW,\x91\xc5R:>\xd5g\x11\x1a\x06:*U\xc5\x1e\x89;\xa6\xc7cS\xf6\xc6\xaa\x1a\x84\xaa"\xdc\xa5\xe9\x91\xe8\xfd\xdd\xae\xd9H\xd0=/Qe\xbe.\xfd\xb6\xbb\xc4@\xc8\xd9q\xf2\x15wT\xd6\x03\xff\x9a\xb5\xde\xa49kKH3V\xb5\x11q\xd7\xf0m\xdc\xd6\x8e\xde`\xced\xd6\xa5\x17\xc2\x9b_O\xe6c',)
+\ No newline at end of file
+diff --git a/pastebot.net/secrets2 b/pastebot.net/secrets2
+new file mode 100644
+index 0000000..e69de29
+diff --git a/pastebot.net/t b/pastebot.net/t
+new file mode 100644
+index 0000000..530d412
+--- /dev/null
++++ b/pastebot.net/t
+@@ -0,0 +1,6 @@
++-----BEGIN PUBLIC KEY-----
++MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3Be4RjyGd6XNC/C0r4fsIObP
++jiw6zHOeDYVIyS/vTvcYEpGKtnx0uMIsTPDIbErfl8T4tJZuEcoZsoQf/wNh7lBf
++LyWZW0u4E8yz49Rkolu+4B5NMEnzZkz0TK95VcRLxVyPkyUMrF6kCCJJ2xH6XkEl
++zX1yZmIriFELYhbDIwIDAQAB
++-----END PUBLIC KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/Noneprivate.pem b/privatekey.net/Noneprivate.pem
+new file mode 100644
+index 0000000..46491c2
+--- /dev/null
++++ b/privatekey.net/Noneprivate.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXgIBAAKBgQC3fUaGVNFy8xcsLZSqE2kkT1kt2rQ2I776OAz4jgJetR/d/3zv
++bihFsx13Gu2CRWin4dVUPWwlW34egTyW8vSyFSfAGMy/Vfve3DpOAdnl9AHcKR+F
++NTSwvtAFRkm0VWnruPUoa5r1lgcdVrMEXWQH7R7mWVJeW9sdLcSgZ0rK/QIDAQAB
++AoGBAJikL6IaNy8QCKvosy6U/TeGhuJ9eMM9E2dmb2vp/xC4Tm1IV696jSgGbDGk
++BgcEJJ7cYLI2cpvVM+K+kh/ktydt4L/ZVl6RYHgsVJvT/iA1cU+XZGaD9UH85k1H
++aWa/S36zDREN2NfkcLkzeYzTs32wZY42AkBIKpcSe02WgePBAkEAu8oXH0p7+xf0
++dCjMy0Lt8ZpLMP+mf31hjScmqnWbfX+DIa3Vyc3tvBMnE1FUvEgD+PqbyvjmfueV
++sGXQJSFcjQJBAPojVlANeDlfcyv7/4NQ85tgL0OtScEE+s3BJSD0jDOwsxRcg3nn
++HH8kRHQeVeK5crM/TV7qvVn6KvBcAokFZDECQQCCKdfRFp3NM5N7mHQrR58KYjpQ
++IkPUBqJBZqvEZ3R5jpLkG0webyCjxlrFZxBm2Tv3ri2iiNerivYUqN2XfwJZAkEA
++veMLh/Phu3QZQ1+m5bITbHVFDBRFtBCqsH2aSP08XZUbLS7Z5DWs7VvD136b5mSv
++jSFWA+MhYWfHJvZCOnBsUQJAStP6wz6975I/uBl4iScoRXW+0G4kBWjzUeWN+WNU
++5OQaosJqtRUam9E0w78GnUo9+NioICQQ92oQ4Q4M6O8VtQ==
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/a1private.pem b/privatekey.net/a1private.pem
+new file mode 100644
+index 0000000..1c650f5
+--- /dev/null
++++ b/privatekey.net/a1private.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXgIBAAKBgQDQlHMXMnD2SX/kr5jo8/h0/E5ouxgFr9r7W4tHSVDa2qsq8a1Q
++nsr32Qs/Zlg81v9wmo1dsnmMHkY9c6xzI/1ynwyyWF9kjuylzdpUvUvoTzGY8qCk
++XvZMANdu/E/o/HoNaROdZ9dDJ7gYTWl3EDn9mqwR5w4L8r+JtpvIy9e4gwIDAQAB
++AoGBAMmGJIzNF4deDEuPvVWWIwAkpj1aRyN3fUROdosxswVBMRAU4Td7tO8yrUNc
++RvTBZZwON3fH8NgIiCTnlj7JDx3pCxisX3PoQumpjy9vIalM7NHRFsIOw64VFq+1
++AtL/adZLvIEKjViUAV5Av0D9e63+rJUOy9JliNRv3WVsN2eBAkEA4L4oIQj3H15i
++os9Bj/edOlx2Gm2vvhUzwMQbLeNPksMYAr91wonkYr+GZ0jSU0z1mLz4qiMNPESw
++zdbZVGBy6wJBAO2W0i7UqeMf1VfmhccFmXSspZ5NNLYS0dXGZRAam6r/OTvyfXUN
++US37oijD+M/1GmbNrClYsycOGZf/8PKs+skCQCJHXr+LKoYyU0EZ85oN3oFkUO8/
++A6sueLJSNwMMxLpR33ur0D5X4end5JYkWVAzUNJ3IEZzCjXDFGSQ/J0OCPkCQQDH
++uhMExUfvo9IgK6zoKv/ewkgT9IlMSjPVxwssZ4HXVOiTSX1HyiMlSbT/GgdvInfI
++VjvVIjiwqzy+t6yhBONpAkEAgD0tsCCGYCbm0b5EQYG+XMKyfRcADoFey03FWbM5
++hEGQ1iGvmPd3bFG9cNf2yNreEtWzSZc0Z1RYnFlp8gaY1g==
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/a2private.pem b/privatekey.net/a2private.pem
+new file mode 100644
+index 0000000..67c2fb8
+--- /dev/null
++++ b/privatekey.net/a2private.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICWwIBAAKBgQCxG8i0sbQM2LfZfN4pamXkmtLO2uCGX9wbJNddtWyr02TbnNbV
++UGGuNROurmO9qnijMJC/jfghylT/hqnHD6hbuZ6Pqet/UQm0YJO70SsTxB4ThK2Y
++XkcnBLEsc3COofkHSYKp4opghqUssgAFhkj6AdcnVjZ/S7LXgMngkky0IwIDAQAB
++AoGABs6xlThrWj8OOf7RrzfWuMW2qprBHIkctbJh0MlDZwtWChbqLwLK7l495m3v
++iX++6U7ZkXNMgUf8omGzruIML4HShyEhxDzQe88iNJRwdY0pONhIBW67rxGF6brl
++dpGn3EIuikIIuIxnB5fx2Bh8t3nsjaHCAmKz3S57cHDDFDkCQQC3VjeC2/iokNNV
++3oZ7RSD2t58XSHkGCpSepNfeRLcYXIP4zTbBOxKwleA6NajAv5CdwWceYWqTC+RY
++2aF7dK59AkEA902iRhFRWJ8HFubU7VHGvAt/WhlwXep6Fq3KfXjuFjhrH6Si8DnN
++Kb3/O8kjhYfKE0m6SsWEcHiekQ9aNA9PHwJAdvekd+8D8WZhLOSEQbN/C3nl63bk
++ya3N+RAg4COY6F8IaEfKEyOhIiNvaHZvdfwY/LWGk6lFPfxGhf1bE0CJBQJAPIq4
++60ZaD8P+zFB+WArpCCgYaUpJA/TfJqYtKEJupunw77IyYXUFEO7+iPhYxdvUUJyA
++CsYIAjDFQOXtQ0lsKQJAN0HqPwI+Z0693jSawpt0Bi0JvlzSOKoyazcelE1cUcr4
++MgzG7LP8jZl5w2IdLFNFCWlm8D5X/7OGpolQy03zRA==
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/a3private.pem b/privatekey.net/a3private.pem
+new file mode 100644
+index 0000000..048589d
+--- /dev/null
++++ b/privatekey.net/a3private.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXQIBAAKBgQCsPlvyOMTRufVIhhC2j7G6vprlkilKrJiqqiGBU5AGQJX0B0LR
++GF/N8UywHltNrihE3ot/axbXLwPqAkmNOYElWj+Qfb+aTJjSdmKlFqcgOfPPWmCS
++5XID+9XWX2kGa6i/oxzync9AZm1kXfPbvRVWOcVCGL+2ms7C0GSswnzxJQIDAQAB
++AoGARGYLCzhB6GrpHaCneGe9k0PnrOyK2y2I/pTK81lkoyb4pUxQ20nLmbON2Y5k
++gYd8VETvrmyvSEpSSpYX8S35u1wDfEgcNcTNdYocY5RPCTiebOrSpv8WixNMvltP
++0dKwvK1u5lV1oyOj0EzxHBED0cJY1TSs5sj+XuAzkxOlNSECQQC1vaeAXRFWqZeV
++fuoegbIQdfcsFdktPivcf/BIQeCJKka0NKXP8rDVT1bfZB1CZ/tlYzLBp85DAju5
++SAfAm/CZAkEA8p9Hkta8sRXQ5G511wooZM9xxL+WUeA7D7n7D82c8W4y6fk7M+hg
++7alXRaHsFLYK9r8jnlRmE56IWAAJZgOAbQJAN0pFhTXLKpRZu29rBnDqnTtmQRE8
++ixkY+vIpRbJU/yXPcM97inII/jwu77Nje2pq/wNY07WbeKNbTBjv0tceMQJBAPF8
++U7L1hQ4FFsumnieQ9q+QQj6AKtAHjQGULS2Hi6RJ+OckqCZ8Lq2elTy7c80RfEwn
++5v3aJ1dzvWVJdBFTfukCQQCOoTZnBjc2ieGEoNPudcZI+ftOezEg9eaQki7rsL/k
++DUnfymUrJ4+8SOnfgczBJOdpFZ3KMV4i/sQ83qhS+23w
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/aprivate.pem b/privatekey.net/aprivate.pem
+new file mode 100644
+index 0000000..10708c0
+--- /dev/null
++++ b/privatekey.net/aprivate.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXQIBAAKBgQCZ7gp8Cz0hi9gvsuMEaDvTe76wpa22spPLbEcYl3PKZFugSOQ+
++LrQlY8j4ORWmj3kAVubjUBA6P3QchKTGoxpQtopU+mhf5nx3A6lw32G6hYNKM/x8
++LiKllQTZ6CNLJ1mKndbnHhR7FoIj6RQ6c+Y/IE+hn7HkRXs8R0mkSHrNzQIDAQAB
++AoGBAIZZxtrnsE6EUYeoWg6xr23xtslVgh5RFUBa3F7xacX//B0VIenIN8Heqz1E
++DcqXtSP/tXw3mEJOudheSbd6Cm+Heutp8ZJBfhVeeL7F2aI+9/I6oSQEtPB7yJcE
++ZUs/EbhrQ85LQCQWNTM6hDeJ+24uWLMaQp9AAQ1JXTVzlDphAkEAv/KmDivSocdd
++ejhN9EHHq+bZv9AVw2S4J7bkDRPMRNxlnS3CYgPAUiUtY9gZ4crgYp6hwEptv5fk
+++YSSYHEUdQJBAM1LqfE2mmK5BDIKWipI8qDH8JHgFPSgSSS+aUzGl5wk2KWlpCVW
++3gOb3i4FFV4n9E1s5QZPeOj7ZlSaAg4pSPkCQAP6NTKp+c1cYjV8ITFkg4yuVejB
++mRHZbm90PLmApYTvxDNDlXmOdle9aXleKvsgxxGEE/n2ENwde6Mn+hiBf1kCQQCV
++/BmEaOgSCCnQhU+qZPEeFfTkHlow/olxlstHlC9fnGvLWWC7BuPcrxt7c6tQxs/t
++YQlRuu4TCNiSJpIp1m/BAkAbFQkEqmxHjPPhNR7pQXj8vJmiu11U3k4VKdERSOSt
++ExpGEPIupSBKqmxgpYH5+kUq0/FBVwcSO35mXn/89mJz
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
+diff --git a/privatekey.net/mykeysprivate.pem b/privatekey.net/mykeysprivate.pem
+new file mode 100644
+index 0000000..9f3a27b
+--- /dev/null
++++ b/privatekey.net/mykeysprivate.pem
+@@ -0,0 +1,15 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIICXAIBAAKBgQCkkaFz95Rg+Lp6F2T+skInkxMgyRXo0c9vDLaKTdNFaaTGbSwD
++hLkIgTvBizRNKeXI1h5nJvqIlYuXXDJHH/LAqCnpQ63VzRUjbf/3fuZRHacluJM2
++YJ67TWs/sfiZjVITxik8ZTzxWujpg+Omn+OUTzrHIdqsowyibIiGWaeD9wIDAQAB
++AoGAOQYxcNKoOpXVX/r9RvgTzky7QxAKpHsXKr63/eKLw7CgpRUtPCbgSt8lCqKm
++w9oxwk7XiBzMkUloblFHJrgeUC7dB0mb5QIxEvMLwMESZPfD0r3Uk/WlTdViotg3
++/2eV9U6A93BYkGFkwlEl3JGUuu0KjgHd0+d+cf0FjWiigmkCQQC7SM0/X4Y71Dws
++bOyRlboO2RM3Ont4UjJcxv6IXz4+sIjRIqNTj5T3wsp7EdsQJTLiyulns/oRoEn6
++6D18NpS1AkEA4PM2V/BPHZGD80wuta45Q58jBjIwm2E/2VW8LQFa3GWgr7dFIFUH
++OyaHwyOBad/EAlRZGEWWm3PKon0efMltewJALRR+CxYUOoyAm3TwkK6IpZBM1stl
++8vVeGATyOaMrWW2m0ShURgXWprilgnAu2bkKgZq0CflBZUK+6/1A54g/zQJAVxSP
++ovc6CT49kD+bjWVGcbD3A/0F6AB7kQypbdqqa8tDqwINVnjT9cfyok3qWSvwWt6A
++Ju85YDAw7zn0RWZMZQJBAIozNS8/RAc4MkiJnKp1kLbYe/FFKOvOyU8BjJG9wkSt
++4ZBpTS9ntoGRwfnuzDGkRfeI8QrDlPYXdP8RjFmdgUQ=
++-----END RSA PRIVATE KEY-----
+\ No newline at end of file
